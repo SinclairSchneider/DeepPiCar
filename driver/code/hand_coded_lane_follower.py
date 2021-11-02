@@ -5,6 +5,7 @@ import math
 import datetime
 import sys
 import config
+from simple_pid import PID
 
 _SHOW_IMAGE = False
 
@@ -16,22 +17,25 @@ class HandCodedLaneFollower(object):
         self.car = car
         self.curr_steering_angle = 90
 
-    def follow_lane(self, frame):
+    def follow_lane(self, frame, pid):
         # Main entry point of the lane follower
         show_image("orig", frame)
 
         lane_lines, frame = detect_lane(frame)
-        final_frame = self.steer(frame, lane_lines)
+        final_frame = self.steer(frame, lane_lines, pid)
 
         return final_frame
 
-    def steer(self, frame, lane_lines):
+    def steer(self, frame, lane_lines, pid):
         logging.debug('steering...')
         if len(lane_lines) == 0:
             logging.error('No lane lines detected, nothing to do.')
             return frame
 
-        new_steering_angle = compute_steering_angle(frame, lane_lines)
+        if config.use_pid == True:
+            new_steering_angle = compute_steering_angle_pid(frame, lane_lines, pid)
+        else:
+            new_steering_angle = compute_steering_angle(frame, lane_lines)
         self.curr_steering_angle = stabilize_steering_angle(self.curr_steering_angle, new_steering_angle, len(lane_lines))
 
         if self.car is not None:
@@ -63,7 +67,6 @@ def detect_lane(frame):
     show_image("lane lines", lane_lines_image)
 
     return lane_lines, lane_lines_image
-
 
 def detect_edges(frame):
     # filter for blue lane lines
@@ -211,6 +214,31 @@ def compute_steering_angle(frame, lane_lines):
     logging.debug('new steering angle: %s' % steering_angle)
     return steering_angle
 
+def compute_steering_angle_pid(frame, lane_lines, pid):
+    """ Find the steering angle based on lane line coordinate
+        We assume that camera is calibrated to point to dead center
+    """
+    height, width, _ = frame.shape
+    real_center_x = int((width/2)*(1+config.camera_mid_offset_percent))
+    if len(lane_lines) == 0:
+        logging.info('No lane lines detected, do nothing')
+        current_center = 0
+    elif len(lane_lines) == 1:
+        logging.debug('Only detected one lane line, just follow it. %s' % lane_lines[0])
+        x1, _, x2, _ = lane_lines[0][0]
+        if x1 > x2:
+            current_center = real_center_x - 290
+        else:
+            current_center = real_center_x + 290
+    else:
+        left_x1, _, _, _ = lane_lines[0][0]
+        right_x2, _, _, _ = lane_lines[1][0]
+        current_center = int(((left_x1 + right_x2)/2) - real_center_x)
+    steering_angle = int(pid(current_center))*-1
+    #print(steering_angle)
+    steering_angle = steering_angle + 90
+    return steering_angle
+
 
 def stabilize_steering_angle(curr_steering_angle, new_steering_angle, num_of_lane_lines, max_angle_deviation_two_lines=5, max_angle_deviation_one_lane=1):
     """
@@ -298,15 +326,17 @@ def make_points(frame, line):
 # Test Functions
 ############################
 def test_photo(file):
+    pid = PID(1, 0.1, 0.05, setpoint=0)
     land_follower = HandCodedLaneFollower()
     frame = cv2.imread(file)
-    combo_image = land_follower.follow_lane(frame)
+    combo_image = land_follower.follow_lane(frame, pid)
     show_image('final', combo_image, True)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
 
 def test_video(video_file):
+    pid = PID(1, 0.1, 0.05, setpoint=0)
     lane_follower = HandCodedLaneFollower()
     cap = cv2.VideoCapture(video_file + '.avi')
 
@@ -321,7 +351,7 @@ def test_video(video_file):
         while cap.isOpened():
             _, frame = cap.read()
             print('frame %s' % i )
-            combo_image= lane_follower.follow_lane(frame)
+            combo_image= lane_follower.follow_lane(frame, pid)
             
             cv2.imwrite("%s_%03d_%03d.png" % (video_file, i, lane_follower.curr_steering_angle), frame)
             

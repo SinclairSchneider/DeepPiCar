@@ -5,6 +5,7 @@ import datetime
 from hand_coded_lane_follower import HandCodedLaneFollower
 from objects_on_road_processor import ObjectsOnRoadProcessor
 import config
+from simple_pid import PID
 
 _SHOW_IMAGE = True
 
@@ -16,6 +17,11 @@ class DeepPiCar(object):
     __SCREEN_HEIGHT = 240
 
     def __init__(self):
+        if config.logging == False:
+            logging.info('Logging has been turned off')
+            logging.getLogger().setLevel(logging.CRITICAL)
+        else:
+            logging.getLogger().setLevel(logging.INFO)
         """ Init camera and wheels"""
         logging.info('Creating a DeepPiCar...')
 
@@ -92,6 +98,8 @@ class DeepPiCar(object):
         logging.info('Starting to drive at speed %s...' % speed)
         self.back_wheels.speed = speed
         i = 0
+        pid = PID(0.6, 0, 0.04, setpoint=0)
+        pid.output_limits = (-45, 45)
         while self.camera.isOpened():
             _, image_lane = self.camera.read()
             image_objs = image_lane.copy()
@@ -102,7 +110,7 @@ class DeepPiCar(object):
                 self.video_objs.write(image_objs)
                 show_image('Detected Objects', image_objs)
 
-            image_lane = self.follow_lane(image_lane)
+            image_lane = self.follow_lane(image_lane, pid)
             self.video_lane.write(image_lane)
             show_image('Lane Lines', image_lane)
 
@@ -114,8 +122,8 @@ class DeepPiCar(object):
         image = self.traffic_sign_processor.process_objects_on_road(image)
         return image
 
-    def follow_lane(self, image):
-        image = self.lane_follower.follow_lane(image)
+    def follow_lane(self, image, pid):
+        image = self.lane_follower.follow_lane(image, pid)
         return image
 
 
